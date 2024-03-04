@@ -1,0 +1,190 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+
+```{r, warning=FALSE}
+
+library(tidyverse)
+library(caret)
+library(gbm)
+
+```
+
+```{r}
+# Reading the data:
+als_data <- read_rds(file = "../ALS_data_regression/ALS_progression_rate.1822x370.rds") 
+
+als_data    <- als_data %>% rename(response=dFRS)
+
+```
+
+# Quick view of all data
+
+```{r}
+
+als_data[1:10,1:10]
+
+```
+
+# Split into training and prediction set
+
+```{r}
+
+set.seed(0)
+
+als_train    <- als_data %>% filter(!is.na(response))
+als_predict  <- als_data %>% filter(is.na(response))
+
+```
+
+# Finding the best model to predict
+
+```{r}
+
+set.seed(1)
+
+# First we select 90% of the data and put their indicies in a vector
+inTraining <- createDataPartition(als_train$response, p = .90, list = FALSE) # We use 90% of data for training
+
+# Then we make a training data frame containing the 90 % of the data and a validation data frame with the 10% rest of the data
+training    <- als_train[ inTraining,]
+validation  <- als_train[-inTraining,]
+
+# We then make a data frame containing the predictors and one containing the response
+training_x <- training %>% subset(select = c(-response)) %>% as.data.frame()
+training_y <- training$response
+
+# We make the cross validation
+trControl <- trainControl(method = "repeatedcv", number = 5, repeats = 3, verboseIter = F)
+
+# We sample a few of the predicters to run the different methods on
+sample_pred <- sample(colnames(training_x), size = 100)
+training_x <- training_x %>%
+  select(all_of(sample_pred))
+
+# We make a tibble in which we want the rmse and runtime for each method
+result_als <- tibble(method = c("glmnet", "gbm", "enet"), rmse = NA, runtime = NA)
+
+# We now make a for loop where we fit each method to the training data and fill the result tibble.
+for(i in 1:nrow(result_als)) {
+  method <- result_als$method[i]
+  
+  starttime <- Sys.time()
+  
+  fit <- train(x = training_x, 
+               y = training_y, 
+               method = method,
+               tuneLength = 3,
+               trControl = trControl)
+  
+  endtime <- Sys.time()
+  runtime <- as.integer(endtime) - as.integer(starttime)
+  
+  result_als$rmse[i] <- mean(fit$resample$RMSE)
+  result_als$runtime[i] <- runtime
+  
+}
+
+result_als
+
+```
+
+
+```{r}
+
+trainfold <- als_train %>% sample_frac(size = 0.8)
+testfold <- setdiff(als_train, trainfold)
+
+# Getting summary of the model fit using AIC:
+test_fit <- gbm(response ~ ., data = trainfold,
+           distribution = "gaussian", 
+           n.trees = 2000, 
+           shrinkage = 0.1,
+           interaction.depth = 4,
+           cv.folds = 5)
+
+
+significant <- summary(test_fit)$rel.inf
+
+
+
+
+```
+
+
+# Test RMSE
+
+```{r}
+
+# We predict on the test fold
+bestTreeForPrediction <- gbm.perf(test_fit)
+predicted <- predict(test_fit, newdata = testfold, n.trees = bestTreeForPrediction)
+
+# We compare with the observed values and calculate error rate
+observed    <- testfold$response
+
+mse       <- mean((observed-predicted)^2)
+(rmse     <- sqrt(mse))
+
+test_rmse <- rmse # Our guess on the general rmse of the model (very unprecise!)
+
+```
+
+
+# Predict the real unknown data
+
+First we fit the model to all of our known data
+
+Then we predict on the unknown data
+
+The predictions must have the following column and the row order must be the same as the original!
+
+* predicted (the predicted class, either "Normal" or "Tumor")
+
+```{r}
+
+predicted <- predict(object=ALS_model2, newdata = data_predict, type = "response")
+
+submission <- tibble(predicted)
+
+head(submission)
+
+```
+# Submitting your answer
+
+The following code will give us
+
+* your chosen team name
+* the name of the people on the team
+* your estimated error rate (from train/test or CV or similar)
+* your predictions
+
+Please edit the values below.
+
+The filename of the output will be automated minitcga_cancer_classification.TEAMNAME.rds
+
+Please - do not use space or funny letters in your team name.
+
+```{r}
+
+team_name        <- "LCPSoundsystem"
+team_people      <- c("Peter", "Cæcilia", "Lea")
+team_error       <- 0.5054253
+team_predictions <- submission
+
+#
+# Always run this code
+# If it fails you have done something wrong!
+#
+# Extract the columns needed
+
+team_predictions <- subset(team_predictions, select = predicted)
+
+# Save all the stuff in one object
+write_rds(x = list(team_name, team_people, team_error, team_predictions), 
+          file = paste("ALS_prediction_2_", team_name, ".rds", sep=""))
+
+```
+
